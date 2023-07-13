@@ -3,53 +3,101 @@
 require 'pg'
 require 'date'
 
-CONNECTION = PG.connect(dbname: "expenses")
+class ExpenseData
+  def initialize
+    @connection = PG.connect(dbname: "expenses")
+  end
 
-def list_expenses
-  result = CONNECTION.exec_params("SELECT * FROM expenses ORDER BY created_on ASC;")
+  def list_expenses
+    result = @connection.exec_params("SELECT * FROM expenses ORDER BY created_on ASC;")
 
-  result.each do |tuple|
-    columns = [ tuple["id"].rjust(3),
-                tuple["created_on"],
-                tuple["amount"].rjust(12),
-                tuple["memo"] ]
+    display_expenses(result)
+  end
 
-    puts columns.join(" | ")
+  def add_expense(amount, memo)
+    sql = <<~SQL
+      INSERT INTO expenses
+                  (amount, memo, created_on)
+           VALUES ($1, $2, $3);
+    SQL
+    @connection.exec_params(sql, [amount, memo, Date.today])
+  end
+
+  def search(query)
+    sql = "SELECT * FROM expenses WHERE memo ILIKE $1"
+    result = @connection.exec_params(sql, ["%#{query}%"])
+
+    display_expenses(result)
+  end
+
+  def delete_expense(id)
+    select_sql = "SELECT * FROM expenses WHERE id = $1"
+    result = @connection.exec_params(select_sql, [id])
+
+    if result.ntuples > 0
+      delete_sql = "DELETE FROM expenses WHERE id = $1"
+      @connection.exec_params(delete_sql, [id])
+
+      puts "The following expense has been deleted:"
+      display_expenses(result)
+    else
+      puts "There is no expense with the id '#{id}'."
+    end
+  end
+
+  private
+
+  def display_expenses(expenses)
+    expenses.each do |tuple|
+      columns = [ tuple["id"].rjust(3),
+                  tuple["created_on"],
+                  tuple["amount"].rjust(12),
+                  tuple["memo"] ]
+  
+      puts columns.join(" | ")
+    end
   end
 end
 
-def display_help
-  puts <<~HELP
-    An expense recording system
+class CLI
+  def initialize
+    @application = ExpenseData.new
+  end
 
-    Commands:
+  def run(cli_args) # `ARGV` refers to array of CLI arguments to `./expense` execution
+    command = cli_args.shift
+    case command
+    when 'list'
+      @application.list_expenses
+    when 'add'
+      amount = cli_args[0]
+      memo = cli_args[1]
+      abort "You must provide an amount and memo." unless amount && memo
+      @application.add_expense(amount, memo)
+    when 'search'
+      @application.search(cli_args[0])
+    when 'delete'
+      @application.delete_expense(cli_args[0])
+    else
+      display_help
+    end
+  end
 
-    add AMOUNT MEMO - record a new expense
-    clear - delete all expenses
-    list - list all expenses
-    delete NUMBER - remove expense with id NUMBER
-    search QUERY - list expenses with a matching memo field
-  HELP
+  private
+
+  def display_help
+    puts <<~HELP
+      An expense recording system
+  
+      Commands:
+  
+      add AMOUNT MEMO - record a new expense
+      clear - delete all expenses
+      list - list all expenses
+      delete NUMBER - remove expense with id NUMBER
+      search QUERY - list expenses with a matching memo field
+    HELP
+  end
 end
 
-def add_expense(amount, memo)
-  CONNECTION.exec_params(
-  (<<~SQL
-    INSERT INTO expenses
-                (amount, memo, created_on)
-         VALUES ($1, $2, $3);
-  SQL
-  ), [amount, memo, Date.today])
-end
-
-command = ARGV.first # `ARGV` refers to array of CLI arguments to `./expense` execution
-if command == 'list'
-  list_expenses
-elsif command == 'add'
-  amount = ARGV[1]
-  memo = ARGV[2]
-  abort "You must provide an amount and memo." unless amount && memo
-  add_expense(amount, memo)
-else
-  display_help
-end
+CLI.new.run(ARGV)
