@@ -24,6 +24,8 @@ SET default_table_access_method = heap;
 -- Name: expenses; Type: TABLE; Schema: public; Owner: astout5
 --
 
+DROP TABLE IF EXISTS expenses;
+
 CREATE TABLE public.expenses (
     id integer NOT NULL,
     amount numeric(6,2) NOT NULL,

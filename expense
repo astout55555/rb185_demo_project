@@ -2,16 +2,18 @@
 
 require 'pg'
 require 'date'
+require 'io/console'
 
 class ExpenseData
   def initialize
     @connection = PG.connect(dbname: "expenses")
+    setup_schema
   end
 
   def list_expenses
     result = @connection.exec_params("SELECT * FROM expenses ORDER BY created_on ASC;")
-
-    display_expenses(result)
+    display_count(result)
+    display_expenses(result) if result.ntuples > 0
   end
 
   def add_expense(amount, memo)
@@ -27,7 +29,8 @@ class ExpenseData
     sql = "SELECT * FROM expenses WHERE memo ILIKE $1"
     result = @connection.exec_params(sql, ["%#{query}%"])
 
-    display_expenses(result)
+    display_count(result)
+    display_expenses(result) if result.ntuples > 0
   end
 
   def delete_expense(id)
@@ -45,16 +48,55 @@ class ExpenseData
     end
   end
 
+  def delete_all_expenses
+    sql = "DELETE FROM expenses"
+    @connection.exec_params(sql)
+  end
+
   private
 
+  def setup_schema
+    result = @connection.exec <<~SQL
+      SELECT COUNT(*) FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'expenses';
+    SQL
+
+    if result[0]["count"] == '0'
+      @connection.exec <<~SQL
+        CREATE TABLE expenses (
+          id serial PRIMARY KEY,
+          amount numeric(6,2) NOT NULL CHECK (amount >= 0.01),
+          memo text NOT NULL,
+          created_on date NOT NULL
+        );
+      SQL
+    end
+  end
+
   def display_expenses(expenses)
+    total = 0
     expenses.each do |tuple|
       columns = [ tuple["id"].rjust(3),
-                  tuple["created_on"],
+                  tuple["created_on"].rjust(10),
                   tuple["amount"].rjust(12),
                   tuple["memo"] ]
   
       puts columns.join(" | ")
+      total += tuple["amount"].to_f
+    end
+
+    puts '-----------------------------------------'
+    puts "Total #{format('%.2f', total.to_s).rjust(25)}"
+  end
+
+  def display_count(expenses)
+    count = expenses.ntuples
+    if count == 0
+      puts "There are no expenses."
+    elsif count == 1
+      puts "There is 1 expense."
+    else
+      puts "There are #{count} expenses."
     end
   end
 end
@@ -78,6 +120,9 @@ class CLI
       @application.search(cli_args[0])
     when 'delete'
       @application.delete_expense(cli_args[0])
+    when 'clear'
+      puts "This will remove all expenses. Are you sure? (y/n)"
+      @application.delete_all_expenses if $stdin.getch == 'y'
     else
       display_help
     end
